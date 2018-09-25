@@ -1,7 +1,10 @@
 #include <fstream>
 #include <string>
+#include <vector>
 #include <windows.h>
 #include "tinyxml2.h"
+
+#pragma warning (disable:4996)
 
 #define FILE_NAME_SIZE 32
 #define BIG_BUFF_SIZE 1024
@@ -10,7 +13,8 @@
 using namespace std;
 HANDLE hLogFile = NULL;
 string strFolderPath = "";
-string strFileName = "";
+vector<string> vFileName;
+
 
 // Translte code error to message
 void GetLastErrorMessage(DWORD dwErrCode, char *szErrText)
@@ -94,7 +98,7 @@ int ReadPath()
 	tinyxml2::XMLElement *pXmlElement = pXmlDoc.FirstChildElement("Folder");
 	if (pXmlElement == nullptr)
 	{
-		WriteLog(" - Error >> FirstChild not opened\r\n");
+		WriteLog(" - Error >> Folder FirstChild not opened\r\n");
 		return -1;
 	}
 
@@ -104,6 +108,21 @@ int ReadPath()
 		strFolderPath = pXmlElement->GetText();
 	}
 
+	pXmlElement = pXmlDoc.FirstChildElement("File");
+	if (pXmlElement == nullptr)
+	{
+		WriteLog(" - Error >> File FirstChild not opened\r\n");
+		return -1;
+	}
+
+	while (pXmlElement != nullptr)
+	{
+		string sName = "";
+		sName = pXmlElement->GetText();
+		vFileName.push_back(sName);
+		pXmlElement = pXmlElement->NextSiblingElement();
+	};
+
 	return 0;
 }
 
@@ -111,7 +130,6 @@ int ReadPath()
 int FormatFullFolderPath()
 {
 	char szFolder[16] = { 0 };
-	char szFileName[FILE_NAME_SIZE] = { 0 };
 	int nDay = 0;
 	int nMonth = 0;
 	SYSTEMTIME Time;
@@ -155,73 +173,116 @@ int FormatFullFolderPath()
 		nDay = Time.wDay - 1;
 	}
 		
-	if (nDay > 9)
-	{
-		// Convert date to letter if needed
-		sprintf_s(szFileName, FILE_NAME_SIZE, "@b201%x%c1.002", nMonth, 97 + (nDay - 10));
-	}
-	else
-	{
-		sprintf_s(szFileName, FILE_NAME_SIZE, "@b201%x%x1.002", nMonth, nDay);
-	}
-
 	sprintf_s(szFolder, 16, "%02d\\%02d%02d\\", nMonth, nDay, nMonth);
 
-	strFileName = "";
-	strFileName.append(szFileName);
 	strFolderPath.append(szFolder);
-	strFolderPath.append(szFileName);
+
 	return 0;
 }
 
-// 
+// Change symbol inside file
 int ChangeLetter()
 {
+	string strFilePath = "";
+	string strFullPath = "";
 	string strLog = "";
+	string sLine = "";
 	fstream parsingFile;
 	size_t nPos;
-	string sLine;
+	bool bIsChanged = false;
 	int nLength = 0;
 
-	parsingFile.open(strFolderPath, ifstream::in | ifstream::out);
-	if(parsingFile.is_open())
+	HANDLE hFindFile;
+	WIN32_FIND_DATA findData;
+	
+	for each (string sFilename in vFileName)
 	{
-		strLog = " > Processing file : ";
-		strLog.append(strFolderPath);
-		strLog.append(" - ");
-		while (getline(parsingFile, sLine))
-		{
-			nPos = sLine.find_first_of(".");
-			if (nPos != string::npos)
-			{
-				if (sLine.at(nPos + 3) == '2')
-				{
-					nLength += (nPos + 5);
-					parsingFile.seekg(nLength, parsingFile.beg);
-					parsingFile.write("1", 1);
-					strLog.append("OK!\n");
-					break;
-				}
-				else
-				{
-					strLog.append("BAD!\n");
-					break;
-				}
-			}
-			nLength += sLine.length();
-		};
+		strFullPath = strFolderPath;
+		strFullPath.append(sFilename);
 
-		WriteLog((char *)strLog.c_str());
-		parsingFile.close();
+		hFindFile = FindFirstFile(strFullPath.c_str(), &findData);
+		do {
+			if (hFindFile == INVALID_HANDLE_VALUE)
+			{
+				char szErrMessage[BIG_BUFF_SIZE] = { 0 };
+				DWORD dwErr = GetLastError();
+				if (dwErr == ERROR_FILE_NOT_FOUND)
+				{
+					continue;
+				}
+				GetLastErrorMessage(dwErr, szErrMessage);
+				WriteLog(szErrMessage);
+				return -1;
+			}
+
+			bIsChanged = false;
+			nPos = 0;
+			nLength = 0;
+			strFilePath = "";
+			strFilePath.append(strFolderPath);
+			strFilePath.append(findData.cFileName);
+
+			parsingFile.open(strFilePath, ifstream::in | ifstream::out);
+			if (parsingFile.is_open())
+			{
+				strLog = " > Processing file : ";
+				strLog.append(strFilePath);
+				strLog.append(" - ");
+				while (getline(parsingFile, sLine))
+				{
+					nPos = sLine.find_first_of(".");
+					if (nPos != string::npos)
+					{
+						if (sLine.at(nPos + 1) == '0' && sLine.at(nPos + 2) == '0' && sLine.at(nPos + 3) == '2')
+						{
+							nLength += (nPos + 5);
+							parsingFile.seekg(nLength, parsingFile.beg);
+							parsingFile.write("1", 1);
+							strLog.append("OK!\n");
+							bIsChanged = true;
+							break;
+						}
+						if (sLine.at(nPos + 1) == '9' && sLine.at(nPos + 2) == '0' && sLine.at(nPos + 3) == '8')
+						{
+							nLength += (nPos + 3);
+							parsingFile.seekg(nLength, parsingFile.beg);
+							parsingFile.write("0", 1);
+
+							nLength += 2;
+							parsingFile.seekg(nLength, parsingFile.beg);
+							parsingFile.write("1", 1);
+							strLog.append("OK!\n");
+							bIsChanged = true;
+							break;
+						}
+						else continue;
+						{
+							strLog.append("BAD!\n");
+							break;
+						}
+					}
+					nLength += sLine.length();
+				};
+				if (bIsChanged == false)
+				{
+					strLog.append("there is nothing to change\n");
+				}				
+				WriteLog((char *)strLog.c_str());
+				parsingFile.close();
+			}
+			else
+			{
+				strLog.append(" - Error opening ");
+				strLog.append(strFilePath.c_str());
+				strLog.append("\n");
+				WriteLog((char *)strLog.c_str());
+				return -1;
+			}
+
+		} while (FindNextFile(hFindFile, &findData));
 	}
-	else
-	{
-		strLog.append(" - Error opening ");
-		strLog.append(strFolderPath.c_str());
-		strLog.append("\n");
-		WriteLog((char *)strLog.c_str());
-		return -1;
-	}
+
+	
 
 
 
