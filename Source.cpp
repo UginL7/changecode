@@ -331,14 +331,14 @@ WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, _In_ LPSTR l
 	sprintf_s(szStart, BIG_BUFF_SIZE, "End : %04d-%02d-%02d\n", Time.wYear, Time.wMonth, Time.wDay);
 	WriteLog(szStart);
 
-/*
-	for (map<char*, PCHANGE_DATA>::iterator it = g_mapChangeInfo.begin(); it != g_mapChangeInfo.end(); ++it)
+
+	for (map<string, PCHANGE_DATA>::iterator it = g_mapChangeInfo.begin(); it != g_mapChangeInfo.end(); ++it)
 	{
 		if (it->second)
 		{
 			free(it->second);
 		}
-	}*/
+	}
 
 	return nRet;
 }
