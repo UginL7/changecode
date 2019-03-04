@@ -1,6 +1,7 @@
 #include <fstream>
 #include <string>
 #include <vector>
+#include <map>
 #include <windows.h>
 #include "tinyxml2.h"
 
@@ -11,8 +12,17 @@
 #define BUFF_SIZE 512
 
 using namespace std;
-HANDLE hLogFile = NULL;
-string strFolderPath = "";
+
+typedef struct _tagChange
+{
+	string sName;
+	string sOrigValue;
+	string sNewValue;
+}CHANGE_DATA, *PCHANGE_DATA;
+
+HANDLE g_hLogFile = NULL;
+string g_strFolderPath = "";
+map<string, PCHANGE_DATA> g_mapChangeInfo;
 vector<string> vFileName;
 
 
@@ -33,10 +43,10 @@ int WriteLog(char *szMessage)
 	BOOL bResult = FALSE;
 	DWORD dwReal;
 
-	if (hLogFile == NULL)
+	if (g_hLogFile == NULL)
 	{
-		hLogFile = CreateFile("Report.log", GENERIC_WRITE, FILE_SHARE_WRITE, NULL, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
-		if (hLogFile == INVALID_HANDLE_VALUE)
+		g_hLogFile = CreateFile("Report.log", GENERIC_WRITE, FILE_SHARE_WRITE, NULL, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+		if (g_hLogFile == INVALID_HANDLE_VALUE)
 		{
 			char szErrMessage[BIG_BUFF_SIZE] = { 0 };
 			DWORD dwErr = GetLastError();
@@ -44,11 +54,10 @@ int WriteLog(char *szMessage)
 			OutputDebugString(szErrMessage);
 			return -1;
 		}
-		SetFilePointer(hLogFile, 0, NULL, FILE_END);
+		SetFilePointer(g_hLogFile, 0, NULL, FILE_END);
 	}
 
-
-	bResult = WriteFile(hLogFile, szMessage, strlen(szMessage), &dwReal, NULL);
+	bResult = WriteFile(g_hLogFile, szMessage, strlen(szMessage), &dwReal, NULL);
 	if (bResult == FALSE)
 	{
 		char szErrMessage[BIG_BUFF_SIZE] = { 0 };
@@ -77,14 +86,14 @@ int ReadPath()
 		WriteLog(szErrMessage);
 		return -1;
 	}
-	strFolderPath = szFolderPath;
-	nPos = strFolderPath.find_last_of("\\");
+	g_strFolderPath = szFolderPath;
+	nPos = g_strFolderPath.find_last_of("\\");
 	if (nPos != string::npos)
 	{
-		strFolderPath = strFolderPath.substr(0, nPos + 1);
+		g_strFolderPath = g_strFolderPath.substr(0, nPos + 1);
 	}
 
-	strncpy_s(szFullXmlFilePath, BUFF_SIZE, strFolderPath.c_str(), strFolderPath.length());
+	strncpy_s(szFullXmlFilePath, BUFF_SIZE, g_strFolderPath.c_str(), g_strFolderPath.length());
 	strncpy_s(szFullXmlFilePath + strlen(szFullXmlFilePath), BUFF_SIZE - strlen(szFullXmlFilePath), "path.xml", strlen("path.xml"));
 
 	tinyxml2::XMLDocument pXmlDoc;
@@ -95,7 +104,8 @@ int ReadPath()
 		return -1;
 	}
 
-	tinyxml2::XMLElement *pXmlElement = pXmlDoc.FirstChildElement("Folder");
+	// Отримання даних з файлу
+	tinyxml2::XMLElement *pXmlElement = pXmlDoc.FirstChildElement("change")->FirstChildElement("folder");
 	if (pXmlElement == nullptr)
 	{
 		WriteLog(" - Error >> Folder FirstChild not opened\r\n");
@@ -104,24 +114,32 @@ int ReadPath()
 
 	if (pXmlElement != nullptr)
 	{
-		strFolderPath = "";
-		strFolderPath = pXmlElement->GetText();
+		g_strFolderPath = "";
+		g_strFolderPath = pXmlElement->GetText();
 	}
 
-	pXmlElement = pXmlDoc.FirstChildElement("File");
-	if (pXmlElement == nullptr)
-	{
-		WriteLog(" - Error >> File FirstChild not opened\r\n");
-		return -1;
-	}
-
+	pXmlElement = pXmlDoc.FirstChildElement("change")->FirstChildElement("file");
 	while (pXmlElement != nullptr)
 	{
-		string sName = "";
-		sName = pXmlElement->GetText();
-		vFileName.push_back(sName);
-		pXmlElement = pXmlElement->NextSiblingElement();
-	};
+		PCHANGE_DATA pChange = (PCHANGE_DATA)malloc(sizeof(CHANGE_DATA));
+		if (pChange == nullptr)
+		{
+			WriteLog(" - Error >> Not enough memory for pSwInfo");
+
+			return -1;
+		}
+		memset(pChange, 0, sizeof(CHANGE_DATA));
+
+		pChange->sName = pXmlElement->Attribute("name");
+		pChange->sOrigValue = pXmlElement->Attribute("original");
+		pChange->sNewValue = pXmlElement->Attribute("new");		
+		g_mapChangeInfo[pChange->sName] = pChange;
+		vFileName.push_back(pChange->sName);
+
+		// Отримання наступного запису в файлі
+		pXmlElement = pXmlElement->NextSiblingElement("file");
+	}
+
 
 	return 0;
 }
@@ -175,13 +193,13 @@ int FormatFullFolderPath()
 		
 	sprintf_s(szFolder, 16, "%02d\\%02d%02d\\", nMonth, nDay, nMonth);
 
-	strFolderPath.append(szFolder);
+	g_strFolderPath.append(szFolder);
 
 	return 0;
 }
 
 // Change symbol inside file
-int ChangeLetter()
+int ChangeSymbol()
 {
 	string strFilePath = "";
 	string strFullPath = "";
@@ -191,14 +209,17 @@ int ChangeLetter()
 	size_t nPos;
 	bool bIsChanged = false;
 	int nLength = 0;
+	int nChangeLength = 0;
 
 	HANDLE hFindFile;
 	WIN32_FIND_DATA findData;
 	
 	for each (string sFilename in vFileName)
 	{
-		strFullPath = strFolderPath;
+		CHANGE_DATA pData;
+		strFullPath = g_strFolderPath;
 		strFullPath.append(sFilename);
+		nChangeLength = g_mapChangeInfo[sFilename]->sOrigValue.length();
 
 		hFindFile = FindFirstFile(strFullPath.c_str(), &findData);
 		do {
@@ -219,7 +240,7 @@ int ChangeLetter()
 			nPos = 0;
 			nLength = 0;
 			strFilePath = "";
-			strFilePath.append(strFolderPath);
+			strFilePath.append(g_strFolderPath);
 			strFilePath.append(findData.cFileName);
 
 			parsingFile.open(strFilePath, ifstream::in | ifstream::out);
@@ -230,38 +251,18 @@ int ChangeLetter()
 				strLog.append(" - ");
 				while (getline(parsingFile, sLine))
 				{
-					nPos = sLine.find_first_of(".");
+					nPos = sLine.find(g_mapChangeInfo[sFilename]->sOrigValue);					
 					if (nPos != string::npos)
 					{
-						if (sLine.at(nPos + 1) == '0' && sLine.at(nPos + 2) == '0' && sLine.at(nPos + 3) == '2')
-						{
-							nLength += (nPos + 5);
-							parsingFile.seekg(nLength, parsingFile.beg);
-							parsingFile.write("1", 1);
-							strLog.append("OK!\n");
-							bIsChanged = true;
-							break;
-						}
-						if (sLine.at(nPos + 1) == '9' && sLine.at(nPos + 2) == '0' && sLine.at(nPos + 3) == '8')
-						{
-							nLength += (nPos + 3);
-							parsingFile.seekg(nLength, parsingFile.beg);
-							parsingFile.write("0", 1);
-
-							nLength += 2;
-							parsingFile.seekg(nLength, parsingFile.beg);
-							parsingFile.write("1", 1);
-							strLog.append("OK!\n");
-							bIsChanged = true;
-							break;
-						}
-						else continue;
-						{
-							strLog.append("BAD!\n");
-							break;
-						}
+						sLine.replace(nPos, nChangeLength, g_mapChangeInfo[sFilename]->sNewValue);
+						nLength += nPos;
+						parsingFile.seekg(nLength, parsingFile.beg);
+						parsingFile.write(g_mapChangeInfo[sFilename]->sNewValue.c_str(), nChangeLength);
+						parsingFile.flush();
+						strLog.append("OK!\n");
+						bIsChanged = true;
 					}
-					nLength += sLine.length();
+					nLength += sLine.length() + strlen("\r\n");
 				};
 				if (bIsChanged == false)
 				{
@@ -278,14 +279,8 @@ int ChangeLetter()
 				WriteLog((char *)strLog.c_str());
 				return -1;
 			}
-
 		} while (FindNextFile(hFindFile, &findData));
 	}
-
-	
-
-
-
 	return 0;
 }
 
@@ -306,7 +301,7 @@ WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, _In_ LPSTR l
 		sprintf_s(szStart, BIG_BUFF_SIZE, "End : %04d-%02d-%02d\n", Time.wYear, Time.wMonth, Time.wDay);
 		WriteLog(szStart);
 
-		CloseHandle(hLogFile);
+		CloseHandle(g_hLogFile);
 		return nRet;
 	}
 
@@ -317,24 +312,33 @@ WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, _In_ LPSTR l
 		sprintf_s(szStart, BIG_BUFF_SIZE, "End : %04d-%02d-%02d\n", Time.wYear, Time.wMonth, Time.wDay);
 		WriteLog(szStart);
 
-		CloseHandle(hLogFile);
+		CloseHandle(g_hLogFile);
 		return nRet;
 	}
 	
-	nRet = ChangeLetter();
+	nRet = ChangeSymbol();
 	if(nRet < 0)
 	{
 		strset(szStart, 0);
 		sprintf_s(szStart, BIG_BUFF_SIZE, "End : %04d-%02d-%02d\n", Time.wYear, Time.wMonth, Time.wDay);
 		WriteLog(szStart);
 
-		CloseHandle(hLogFile);
+		CloseHandle(g_hLogFile);
 		return nRet;
 	}
 
 	strset(szStart, 0);
 	sprintf_s(szStart, BIG_BUFF_SIZE, "End : %04d-%02d-%02d\n", Time.wYear, Time.wMonth, Time.wDay);
 	WriteLog(szStart);
+
+/*
+	for (map<char*, PCHANGE_DATA>::iterator it = g_mapChangeInfo.begin(); it != g_mapChangeInfo.end(); ++it)
+	{
+		if (it->second)
+		{
+			free(it->second);
+		}
+	}*/
 
 	return nRet;
 }

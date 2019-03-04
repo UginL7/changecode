@@ -1,6 +1,6 @@
-<Folder>D:\tmp\</Folder>
-
-<File>file??0.002</File>
-<File>file??1.002</File>
-<File>file??2.002</File>
-<File>file??1.908</File>
+<change>
+  <folder>d:\tmp\412\</folder>
+  <file name = "@b208??0.908" original =".908" new =".001"/>
+  <file name = "@b308??1.908" original =".908" new =".001" />
+  <file name = "@b208??0.002" original ="0.002" new ="1.007"/>
+</change>
